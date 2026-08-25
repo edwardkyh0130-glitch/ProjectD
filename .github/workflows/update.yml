@@ -1,0 +1,46 @@
+name: update
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "23 */3 * * *"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: cache-update
+  cancel-in-progress: true
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      SOURCE_ID: ${{ secrets.SOURCE_ID }}
+      SOURCE_TEMPLATE: ${{ secrets.SOURCE_TEMPLATE }}
+
+    steps:
+      - name: checkout
+        uses: actions/checkout@v7
+
+      - name: build
+        run: python3 tools/sync.py
+
+      - name: publish latest only
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s build/data.json
+          cp build/data.json /tmp/data.json
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git checkout --orphan __cache_publish__
+          git rm -rf . >/dev/null 2>&1 || true
+          git clean -fdx >/dev/null 2>&1 || true
+          cp /tmp/data.json data.json
+          git add data.json
+          git commit -m "refresh" >/dev/null
+          git push --force origin HEAD:cache
