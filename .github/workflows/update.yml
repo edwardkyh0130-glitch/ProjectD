@@ -3,21 +3,16 @@ name: update
 on: { workflow_dispatch: {}, schedule: [{ cron: "23 */3 * * *" }] }
 
 permissions:
-  contents: read
-  pages: write
-  id-token: write
+  contents: write
 
 concurrency:
-  group: pages-update
+  group: dataset-update
   cancel-in-progress: true
 
 jobs:
-  build-and-deploy:
+  build:
     runs-on: ubuntu-latest
     timeout-minutes: 8
-
-    environment:
-      name: github-pages
 
     env:
       SOURCE_ID: ${{ secrets.SOURCE_ID }}
@@ -27,16 +22,26 @@ jobs:
       - name: checkout
         uses: actions/checkout@v6
 
-      - name: setup pages
-        uses: actions/configure-pages@v5
-
       - name: build static dataset
         run: python3 tools/sync.py
 
-      - name: upload pages artifact
-        uses: actions/upload-pages-artifact@v4
-        with:
-          path: build/site
+      - name: publish site branch
+        shell: bash
+        run: |
+          set -euo pipefail
 
-      - name: deploy pages
-        uses: actions/deploy-pages@v4
+          cp -r build/site /tmp/site
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git checkout --orphan __site_publish__
+          git rm -rf . >/dev/null 2>&1 || true
+          git clean -fdx >/dev/null 2>&1 || true
+
+          mkdir public
+          cp -a /tmp/site/. public/
+
+          git add public
+          git commit -m "refresh"
+          git push --force origin HEAD:site
