@@ -1,1 +1,48 @@
+name: update
 
+on:
+  workflow_dispatch:
+  schedule:
+    # UTC 기준, 3시간마다 실행
+    - cron: "23 */3 * * *"
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages-update
+  cancel-in-progress: true
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    env:
+      SOURCE_ID: ${{ secrets.SOURCE_ID }}
+      SOURCE_TEMPLATE: ${{ secrets.SOURCE_TEMPLATE }}
+
+    steps:
+      - name: checkout
+        uses: actions/checkout@v6
+
+      - name: setup pages
+        uses: actions/configure-pages@v5
+
+      - name: build static dataset
+        run: python3 tools/sync.py
+
+      - name: upload pages artifact
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: build/site
+
+      - name: deploy pages
+        id: deployment
+        uses: actions/deploy-pages@v4
