@@ -22,7 +22,7 @@ jobs:
       - name: checkout
         uses: actions/checkout@v6
 
-      - name: build static dataset
+      - name: build snapshot site
         run: python3 tools/sync.py
 
       - name: publish site branch
@@ -30,7 +30,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          cp -r build/site /tmp/site
+          cp -a build/site /tmp/site
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
