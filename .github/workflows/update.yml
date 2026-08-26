@@ -1,10 +1,6 @@
 name: update
 
-on:
-  workflow_dispatch:
-  schedule:
-    # UTC 기준, 3시간마다 실행
-    - cron: "23 */3 * * *"
+on: { workflow_dispatch: {}, schedule: [{ cron: "23 */3 * * *" }] }
 
 permissions:
   contents: read
@@ -35,6 +31,17 @@ jobs:
       - name: setup pages
         uses: actions/configure-pages@v5
 
+      - name: build static dataset
+        run: python3 tools/sync.py
+
+      - name: upload pages artifact
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: build/site
+
+      - name: deploy pages
+        id: deployment
+        uses: actions/deploy-pages@v4
       - name: build static dataset
         run: python3 tools/sync.py
 
