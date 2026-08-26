@@ -10,28 +10,30 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
-# Public labels are deliberately neutral.
-# The private ChatGPT project maps s0/s1/s2/s3 to the actual button modes.
-GROUPS = {"s0": 4, "s1": 5, "s2": 6, "s3": 8}
-MIN_RECORDS = 101
-CHUNK_SIZE = 120
+GROUPS = {
+    "4B": 4,
+    "5B": 5,
+    "6B": 6,
+    "8B": 8,
+}
 
-# Only fields needed for analysis are exported.
-# Keys are shortened to make the public dataset less self-explanatory.
+MIN_RECORDS = 101
+
+# Keep only fields needed for analysis.
 FIELD_MAP = (
-    ("title", "i"),
-    ("name", "n"),
-    ("dlcCode", "c"),
-    ("pattern", "p"),
-    ("level", "l"),
-    ("floor", "f"),
-    ("floorName", "q"),
-    ("maxRating", "a"),
-    ("score", "s"),
-    ("maxCombo", "m"),
-    ("rating", "r"),
-    ("djpower", "d"),
-    ("maxDjpower", "z"),
+    ("title", "title"),
+    ("name", "name"),
+    ("dlcCode", "dlc"),
+    ("pattern", "pattern"),
+    ("level", "level"),
+    ("floor", "floor"),
+    ("floorName", "floorName"),
+    ("maxRating", "maxRating"),
+    ("score", "score"),
+    ("maxCombo", "maxCombo"),
+    ("rating", "rating"),
+    ("djpower", "djpower"),
+    ("maxDjpower", "maxDjpower"),
 )
 
 
@@ -40,10 +42,11 @@ def request_json(url: str):
         url,
         headers={
             "Accept": "application/json",
-            "User-Agent": "static-dataset-sync/1.6",
+            "User-Agent": "djmax-snapshot-sync/1.7",
         },
         method="GET",
     )
+
     with urllib.request.urlopen(req, timeout=30) as response:
         charset = response.headers.get_content_charset() or "utf-8"
         return json.loads(response.read().decode(charset))
@@ -65,6 +68,7 @@ def extract(payload):
         return ok, count, records
 
     data = payload.get("data")
+
     if isinstance(data, dict) and isinstance(data.get("records"), list):
         records = data["records"]
         count = int(data.get("count", len(records)))
@@ -79,25 +83,27 @@ def compact_record(record):
         return None
 
     out = {}
-    for src, dst in FIELD_MAP:
-        if src in record:
-            out[dst] = record[src]
+
+    for source_key, public_key in FIELD_MAP:
+        if source_key in record:
+            out[public_key] = record[source_key]
+
     return out
 
 
 def page_shell(title: str, body: str) -> str:
     return f"""<!doctype html>
-<html lang="en">
+<html lang="ko">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="robots" content="noindex,noarchive">
 <title>{html.escape(title)}</title>
 <style>
-body{{font-family:system-ui,sans-serif;max-width:980px;margin:24px auto;padding:0 16px;line-height:1.45}}
-pre{{white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px}}
-a{{text-decoration:none}}
-small{{opacity:.72}}
+body{{font-family:system-ui,sans-serif;max-width:760px;margin:32px auto;padding:0 18px;line-height:1.5}}
+.card{{padding:18px;border:1px solid #ddd;border-radius:16px;margin:14px 0}}
+.download{{display:inline-block;padding:14px 18px;border:1px solid #111;border-radius:12px;text-decoration:none;font-weight:700}}
+small{{opacity:.7}}
 </style>
 </head>
 <body>
@@ -105,47 +111,6 @@ small{{opacity:.72}}
 </body>
 </html>
 """
-
-
-def write_group_pages(site: Path, group: str, records):
-    folder = site / group
-    folder.mkdir(parents=True, exist_ok=True)
-
-    links = []
-    total = len(records)
-
-    for idx, start in enumerate(range(0, total, CHUNK_SIZE), start=1):
-        chunk = records[start:start + CHUNK_SIZE]
-        filename = f"{idx:03d}.html"
-
-        lines = "\n".join(
-            html.escape(
-                json.dumps(
-                    item,
-                    ensure_ascii=False,
-                    separators=(",", ":"),
-                )
-            )
-            for item in chunk
-        )
-
-        end = start + len(chunk)
-
-        body = (
-            f"<h1>{group} / {idx:03d}</h1>"
-            f"<p><small>range {start + 1}-{end} / {total}</small></p>"
-            f"<pre>{lines}</pre>"
-            f'<p><a href="../index.html">index</a></p>'
-        )
-
-        (folder / filename).write_text(
-            page_shell(f"{group}-{idx:03d}", body),
-            encoding="utf-8",
-        )
-
-        links.append((filename, start + 1, end))
-
-    return links
 
 
 def main() -> int:
@@ -163,17 +128,18 @@ def main() -> int:
     site = Path("build/site")
     site.mkdir(parents=True, exist_ok=True)
 
-    generated = (
-        datetime.now(timezone.utc)
-        .isoformat()
-        .replace("+00:00", "Z")
-    )
+    generated = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
-    summary = {}
-    group_links = {}
+    snapshot = {
+        "schema": "djmax-analysis-snapshot-v1.7",
+        "generatedAt": generated,
+        "minimumRecordsPerButton": MIN_RECORDS,
+        "buttons": {},
+    }
+
     any_ok = False
 
-    for group, button in GROUPS.items():
+    for label, button in GROUPS.items():
         try:
             payload = request_json(
                 build_url(
@@ -190,40 +156,34 @@ def main() -> int:
 
             records = []
 
-            for record in raw_records:
-                compact = compact_record(record)
+            for raw in raw_records:
+                item = compact_record(raw)
 
-                if compact is not None:
-                    records.append(compact)
+                if item is not None:
+                    records.append(item)
 
-            # count from the API is kept for the 101-record gate.
-            summary[group] = {
+            snapshot["buttons"][label] = {
                 "ok": True,
-                "n": count,
+                "count": count,
+                "analysisAllowed": count >= MIN_RECORDS,
                 "need": max(0, MIN_RECORDS - count),
+                "records": records,
             }
 
-            group_links[group] = write_group_pages(
-                site,
-                group,
-                records,
-            )
-
             any_ok = True
-
-            print(f"{group}: ok ({count})")
+            print(f"{label}: ok ({count})")
 
         except urllib.error.HTTPError as exc:
-            summary[group] = {
+            snapshot["buttons"][label] = {
                 "ok": False,
-                "n": 0,
+                "count": 0,
+                "analysisAllowed": False,
                 "need": MIN_RECORDS,
+                "records": [],
                 "error": f"http_{exc.code}",
             }
 
-            group_links[group] = []
-
-            print(f"{group}: failed (http_{exc.code})")
+            print(f"{label}: failed (http_{exc.code})")
 
         except Exception as exc:
             code = (
@@ -232,82 +192,75 @@ def main() -> int:
                 else "fetch_failed"
             )
 
-            summary[group] = {
+            snapshot["buttons"][label] = {
                 "ok": False,
-                "n": 0,
+                "count": 0,
+                "analysisAllowed": False,
                 "need": MIN_RECORDS,
+                "records": [],
                 "error": code,
             }
 
-            group_links[group] = []
+            print(f"{label}: failed ({code})")
 
-            print(f"{group}: failed ({code})")
+    snapshot_path = site / "analysis_snapshot.json"
 
-    rows = []
-
-    for group in GROUPS:
-        info = summary[group]
-
-        if not info.get("ok"):
-            rows.append(
-                f"<section><h2>{group}</h2>"
-                f"<p>ok=0; n=0; need={MIN_RECORDS}</p></section>"
-            )
-
-            continue
-
-        links_html = " ".join(
-            f'<a href="{group}/{html.escape(filename)}">'
-            f"p{idx:03d}</a>"
-            for idx, (filename, _, _) in enumerate(
-                group_links[group],
-                start=1,
-            )
-        )
-
-        rows.append(
-            f"<section><h2>{group}</h2>"
-            f"<p>ok=1; n={info['n']}; need={info['need']}</p>"
-            f"<p>{links_html}</p></section>"
-        )
-
-    body = (
-        "<h1>Dataset</h1>"
-        '<p><small>v=1.6-web</small></p>'
-        f'<p><small>ts={html.escape(generated)}</small></p>'
-        + "".join(rows)
-    )
-
-    (site / "index.html").write_text(
-        page_shell("Dataset", body),
-        encoding="utf-8",
-    )
-
-    # Useful for the project to validate the build version without exposing identity.
-    (site / "meta.json").write_text(
+    snapshot_path.write_text(
         json.dumps(
-            {
-                "v": "1.6-web",
-                "ts": generated,
-                "g": summary,
-            },
+            snapshot,
             ensure_ascii=False,
             separators=(",", ":"),
         ),
         encoding="utf-8",
     )
 
-    # Keep Pages from invoking Jekyll semantics on generated files.
-    (site / ".nojekyll").write_text(
-        "",
+    cards = []
+
+    for label in GROUPS:
+        info = snapshot["buttons"][label]
+
+        if info["ok"]:
+            cards.append(
+                f'<div class="card"><h2>{label}</h2>'
+                f'<p>records: {info["count"]}</p>'
+                f'<p>analysisAllowed: {str(info["analysisAllowed"]).lower()}</p>'
+                f'<p>need: {info["need"]}</p></div>'
+            )
+        else:
+            cards.append(
+                f'<div class="card"><h2>{label}</h2>'
+                f'<p>fetch failed</p></div>'
+            )
+
+    body = (
+        "<h1>Dataset snapshot</h1>"
+        '<p><small>v1.7 attachment mode</small></p>'
+        f'<p><small>updated: {html.escape(generated)}</small></p>'
+        '<p><a class="download" href="analysis_snapshot.json" download>'
+        'Download analysis snapshot</a></p>'
+        + "".join(cards)
+        + "<p><small>Attach the downloaded JSON file to the ChatGPT project.</small></p>"
+    )
+
+    (site / "index.html").write_text(
+        page_shell("Dataset snapshot", body),
         encoding="utf-8",
     )
 
+    # Ask Cloudflare Pages to serve the snapshot as a download.
+    (site / "_headers").write_text(
+        """/analysis_snapshot.json
+  Content-Type: application/json; charset=utf-8
+  Content-Disposition: attachment; filename="analysis_snapshot.json"
+  Cache-Control: no-cache
+""",
+        encoding="utf-8",
+    )
+
+    (site / ".nojekyll").write_text("", encoding="utf-8")
+
     if not any_ok:
-        print(
-            "all groups failed",
-            file=sys.stderr,
-        )
+        print("all groups failed", file=sys.stderr)
         return 1
 
     return 0
