@@ -18,7 +18,6 @@ jobs:
 
     environment:
       name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
 
     env:
       SOURCE_ID: ${{ secrets.SOURCE_ID }}
@@ -40,16 +39,4 @@ jobs:
           path: build/site
 
       - name: deploy pages
-        id: deployment
-        uses: actions/deploy-pages@v4
-      - name: build static dataset
-        run: python3 tools/sync.py
-
-      - name: upload pages artifact
-        uses: actions/upload-pages-artifact@v4
-        with:
-          path: build/site
-
-      - name: deploy pages
-        id: deployment
         uses: actions/deploy-pages@v4
